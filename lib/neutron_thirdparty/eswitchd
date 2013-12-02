@@ -1,0 +1,68 @@
+# Mellanox Embeded-Switch
+#------------------------
+
+
+# Save trace setting
+MY_XTRACE=$(set +o | grep xtrace)
+set +o xtrace
+
+
+ESWITCHD_REPO=${ESWITCHD_REPO:-https://github.com/mellanox-openstack/mellanox-eswitchd.git}
+ESWITCHD_LOG_DIR=/var/log/eswitchd
+ESWITCHD_LOG_FILE=$ESWITCHD_LOG_DIR/eswitchd.log
+ESWITCHD_BRANCH=${ESWITCHD_BRANCH:-master}
+ESWITCHD_CONF_DIR=etc/eswitchd
+ESWITCHD_CONF_FILE=$ESWITCHD_CONF_DIR/eswitchd.conf
+LB_PLUGIN_CONF_FILE=etc/neutron/plugins/linuxbridge/linuxbridge_conf.ini
+
+function install_eswitchd {
+    mkdir -p $DEST/mellanox
+    git_clone $ESWITCHD_REPO $DEST/mellanox/eswitchd $ESWITCHD_BRANCH
+}
+
+function configure_eswitchd {
+    # setting up log
+    sudo mkdir -p $ESWITCHD_LOG_DIR
+    sudo chown -R $(whoami) $ESWITCHD_LOG_DIR
+    touch $ESWITCHD_LOG_FILE
+
+    # setting up configuration
+    sudo mkdir -p /$ESWITCHD_CONF_DIR
+    sudo chown -R $(whoami) /$ESWITCHD_CONF_DIR
+    cd $DEST/mellanox/eswitchd/
+    cp -r $ESWITCHD_CONF_DIR/* /$ESWITCHD_CONF_DIR
+    sudo cp etc/sudoers.d/eswitchd /etc/sudoers.d
+    sudo chmod 0440 /etc/sudoers.d/eswitchd
+
+    sudo python setup.py install
+    iniset /$ESWITCHD_CONF_FILE DAEMON fabrics "${PHYSICAL_NETWORK}:${PHYSICAL_INTERFACE}"
+
+    # configuring linuxbridge agent
+    mkdir -p $(dirname /$LB_PLUGIN_CONF_FILE)
+    cp $DEST/neutron/$LB_PLUGIN_CONF_FILE /$LB_PLUGIN_CONF_FILE
+    iniset /$LB_PLUGIN_CONF_FILE linux_bridge physical_interface_mappings $PHYSICAL_INTERFACE_MAPPINGS
+    iniset /$LB_PLUGIN_CONF_FILE securitygroup enable_security_group False
+    iniset /$LB_PLUGIN_CONF_FILE securitygroup firewall_driver neutron.agent.firewall.NoopFirewallDriver 
+}
+
+function init_eswitchd {
+    :
+}
+
+function start_eswitchd {
+    if _is_using_lb_agent; then
+        screen_it q-lb-agt "$NEUTRON_BIN_DIR/neutron-linuxbridge-agent --config-file $NEUTRON_CONF --config-file /$LB_PLUGIN_CONF_FILE"
+    fi
+    screen_it eswitchd "cd $DEST/mellanox/eswitchd/eswitchd && python eswitch_daemon.py --config-file /$ESWITCHD_CONF_FILE"
+}
+
+function stop_eswitchd {
+    :
+}
+
+function check_eswitchd {
+    :
+}
+
+# Restore trace
+$MY_XTRACE

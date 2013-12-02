@@ -1,0 +1,81 @@
+# Neutron Mellanox agent
+# ---------------------------
+
+# Save trace setting
+MY_XTRACE=$(set +o | grep xtrace)
+set +o xtrace
+
+function _is_using_lb_agent() {
+    is_service_enabled q-dhcp
+}
+
+function _prefix_function() {
+    declare -F $1 > /dev/null || die "$1 doesn't exist"
+    eval "$(echo "${2}_${1}()"; declare -f ${1} | tail -n +2)"
+}
+
+if _is_using_lb_agent; then
+    enable_service q-lb-agt
+    source $TOP_DIR/lib/neutron_plugins/linuxbridge
+    _prefix_function neutron_plugin_install_agent_packages lb
+    _prefix_function neutron_plugin_configure_dhcp_agent lb
+    _prefix_function neutron_plugin_configure_l3_agent lb
+fi
+
+function neutron_plugin_install_agent_packages() {
+    if _is_using_lb_agent; then
+        lb_neutron_plugin_install_agent_packages
+    fi
+    install_package python-zmq
+    install_package python-ethtool
+}
+
+function neutron_plugin_configure_plugin_agent() {
+    if [[ -z "$PHYSICAL_INTERFACE_MAPPINGS" ]] && [[ -n "$PHYSICAL_NETWORK" ]] && [[ -n "$PHYSICAL_INTERFACE" ]]; then
+        PHYSICAL_INTERFACE_MAPPINGS=$PHYSICAL_NETWORK:$PHYSICAL_INTERFACE
+    fi
+    if [[ -n "$PHYSICAL_INTERFACE_MAPPINGS" ]]; then
+        iniset /$Q_PLUGIN_CONF_FILE eswitch physical_interface_mappings $PHYSICAL_INTERFACE_MAPPINGS
+    fi
+    AGENT_BINARY="$NEUTRON_BIN_DIR/neutron-mlnx-agent"
+    iniset /$Q_PLUGIN_CONF_FILE eswitch vnic_type mlnx_direct
+    iniset /$Q_PLUGIN_CONF_FILE eswitch daemon_endpoint tcp://$HOST_IP:60001
+    iniset /$Q_PLUGIN_CONF_FILE agent rpc True
+}
+
+function neutron_plugin_create_nova_conf() {
+    NOVA_VIF_DRIVER=${NOVA_VIF_DRIVER:-"nova.virt.libvirt.vif.LibvirtGenericVIFDriver"}
+    iniset $NOVA_CONF DEFAULT security_group_api nova
+}
+
+function neutron_plugin_configure_dhcp_agent() {
+    if _is_using_lb_agent; then
+        lb_neutron_plugin_configure_dhcp_agent
+    fi
+}
+
+function neutron_plugin_configure_l3_agent() {
+    if is_service_enabled q-l3; then
+        lb_neutron_plugin_configure_l3_agent
+    fi
+}
+
+function neutron_plugin_setup_interface_driver() {
+    local conf_file=$1
+    iniset $conf_file DEFAULT interface_driver neutron.agent.linux.interface.BridgeInterfaceDriver
+}
+
+function neutron_plugin_configure_debug_command() {
+    iniset $NEUTRON_TEST_CONFIG_FILE DEFAULT external_network_bridge
+}
+
+function neutron_plugin_check_adv_test_requirements() {
+    is_service_enabled q-agt && is_service_enabled eswitchd && return 0
+}
+
+function is_neutron_ovs_base_plugin() {
+    return 1;
+}
+
+# Restore xtrace
+$MY_XTRACE

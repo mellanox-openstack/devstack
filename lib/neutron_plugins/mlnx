@@ -1,0 +1,38 @@
+# Neutron Mellanox plugin
+# ---------------------------
+
+# Save trace setting
+MY_XTRACE=$(set +o | grep xtrace)
+set +o xtrace
+
+source $TOP_DIR/lib/neutron_plugins/mlnx_agent
+
+function neutron_plugin_configure_common {
+    Q_PLUGIN_CONF_PATH=etc/neutron/plugins/mlnx
+    Q_PLUGIN_CONF_FILENAME=mlnx_conf.ini
+    Q_DB_NAME="neutron_mlnx"
+    Q_PLUGIN_CLASS="neutron.plugins.mlnx.mlnx_plugin.MellanoxEswitchPlugin"
+}
+
+function neutron_plugin_configure_service {
+    if [[ "$ENABLE_TENANT_VLANS" = "True" ]]; then
+        iniset /$Q_PLUGIN_CONF_FILE vlans tenant_network_type vlan
+    else
+        echo "WARNING - The mellanox plugin is using local tenant networks, with no connectivity between hosts."
+    fi
+
+    if [[ -n "$PHYSICAL_NETWORK" ]] && [[ -n "$TENANT_VLAN_RANGE" ]]; then
+        NETWORK_VLAN_RANGES=$PHYSICAL_NETWORK:$TENANT_VLAN_RANGE
+        iniset /$Q_PLUGIN_CONF_FILE MLNX network_vlan_ranges $NETWORK_VLAN_RANGES
+    fi
+    iniset /$Q_PLUGIN_CONF_FILE agent rpc_support_old_agents True
+    iniset /$Q_PLUGIN_CONF_FILE securitygroup enable_security_group False
+    iniset /$Q_PLUGIN_CONF_FILE securitygroup firewall_driver neutron.agent.firewall.NoopFirewallDriver 
+}
+
+function has_neutron_plugin_security_group {
+        return 0;
+}
+
+# Restore xtrace
+$MY_XTRACE
